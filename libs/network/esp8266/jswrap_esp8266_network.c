@@ -1519,6 +1519,8 @@ void startMDNS(char *hostname) {
   mdns_info->server_port = 23;
   mdns_info->ipAddr = info.ip.addr;
   espconn_mdns_init(mdns_info);
+  espconn_mdns_server_register();
+  espconn_mdns_enable();
   mdns_started = true;
 }
 

@@ -1,5 +1,5 @@
-proj: 	$(PLATFORM_CONFIG_FILE) $(PROJ_NAME)
+proj: 	$(PLATFORM_CONFIG_FILE) $(PROJ_NAME).js
 
-$(PROJ_NAME): $(OBJS)
+$(PROJ_NAME).js: $(OBJS)
 	@echo $($(quiet_)link)
 	@$(call link)

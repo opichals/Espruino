@@ -23,6 +23,7 @@
 #if defined(__i386__) || defined(__x86_64__)
     #define USE_SEPARATE_DOUBLES // cdecl on x86 puts FP args elsewhere!
 #endif
+    #define USE_SEPARATE_DOUBLES // cdecl on x86 puts FP args elsewhere!
 
 #if defined(__WORDSIZE) && __WORDSIZE == 64
   #define USE_64BIT
@@ -180,9 +181,19 @@ JsVar *jsnCallFunction(void *function, JsnArgumentType argumentSpecifier, JsVar 
     if (doubleCount) {
       // We are passing doubles
       if (returnType==JSWAT_JSVARFLOAT) {
-        // On x86, doubles are returned in a floating point unit register
-        JsVarFloat f = ((JsVarFloat (*)(size_t,size_t,size_t,size_t,JsVarFloat,JsVarFloat,JsVarFloat,JsVarFloat))function)(argData[0],argData[1],argData[2],argData[3],doubleData[0],doubleData[1],doubleData[2],doubleData[3]);
-        result = *(uint64_t *)&f;
+        if (argCount==0) {
+            // On x86, doubles are returned in a floating point unit register
+            JsVarFloat f = ((JsVarFloat (*)())function)();
+            result = *(uint64_t *)&f;
+        } else if(argCount==1) {
+          // On x86, doubles are returned in a floating point unit register
+          JsVarFloat f = ((JsVarFloat (*)(size_t,JsVarFloat))function)(argData[0],doubleData[0]);
+          result = *(uint64_t*)&f;
+        } else {
+            // On x86, doubles are returned in a floating point unit register
+            JsVarFloat f = ((JsVarFloat (*)(size_t,size_t,size_t,size_t,JsVarFloat,JsVarFloat,JsVarFloat,JsVarFloat))function)(argData[0],argData[1],argData[2],argData[3],doubleData[0],doubleData[1],doubleData[2],doubleData[3]);
+            result = *(uint64_t *)&f;
+        }
       } else {
 #ifdef USE_64BIT
         if (JSWAT_IS_64BIT(returnType))
@@ -192,9 +203,27 @@ JsVar *jsnCallFunction(void *function, JsnArgumentType argumentSpecifier, JsVar 
           result = ((uint32_t (*)(size_t,size_t,size_t,size_t,JsVarFloat,JsVarFloat,JsVarFloat,JsVarFloat))function)(argData[0],argData[1],argData[2],argData[3],doubleData[0],doubleData[1],doubleData[2],doubleData[3]);
       }
     } else if (returnType==JSWAT_JSVARFLOAT) {
-      // On x86, doubles are returned in a floating point unit register
-      JsVarFloat f = ((JsVarFloat (*)(size_t,size_t,size_t,size_t))function)(argData[0],argData[1],argData[2],argData[3]);
-      result = *(uint64_t*)&f;
+        if (argCount==0) {
+          // On x86, doubles are returned in a floating point unit register
+          JsVarFloat f = ((JsVarFloat (*)())function)();
+          result = *(uint64_t *)&f;
+        } else if(argCount==1) {
+          // On x86, doubles are returned in a floating point unit register
+          JsVarFloat f = ((JsVarFloat (*)(size_t))function)(argData[0]);
+          result = *(uint64_t*)&f;
+        } else if(argCount==2) {
+          // On x86, doubles are returned in a floating point unit register
+          JsVarFloat f = ((JsVarFloat (*)(size_t,size_t))function)(argData[0],argData[1]);
+          result = *(uint64_t*)&f;
+        } else if(argCount==3) {
+          // On x86, doubles are returned in a floating point unit register
+          JsVarFloat f = ((JsVarFloat (*)(size_t,size_t,size_t))function)(argData[0],argData[1],argData[2]);
+          result = *(uint64_t*)&f;
+        } else {
+          // On x86, doubles are returned in a floating point unit register
+          JsVarFloat f = ((JsVarFloat (*)(size_t,size_t,size_t,size_t))function)(argData[0],argData[1],argData[2],argData[3]);
+          result = *(uint64_t*)&f;
+        }
     } else
 #endif
     {
@@ -207,7 +236,13 @@ JsVar *jsnCallFunction(void *function, JsnArgumentType argumentSpecifier, JsVar 
         result = ((uint64_t (*)(size_t,size_t,size_t,size_t))function)(argData[0],argData[1],argData[2],argData[3]);
 #endif
     } else
-        result = ((uint32_t (*)(size_t,size_t,size_t,size_t))function)(argData[0],argData[1],argData[2],argData[3]);
+        if(argCount==0) {
+            result = ((uint32_t (*)())function)();
+        } else if(argCount==1) {
+            result = ((uint32_t (*)(size_t))function)(argData[0]);
+        } else {
+            result = ((uint32_t (*)(size_t,size_t,size_t,size_t))function)(argData[0],argData[1],argData[2],argData[3]);
+        }
     }
   } else { // else it gets tricky...
 #ifdef USE_SEPARATE_DOUBLES

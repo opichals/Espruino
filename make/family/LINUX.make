@@ -21,6 +21,10 @@ ifeq ($(BOARD),RASPBERRYPI)
  endif
 endif
 
+ifeq ($(BOARD),EMSCRIPTEN)
+  export CCPREFIX=em
+endif
+
 DEFINES += -DLINUX
 INCLUDE += -I$(ROOT)/targets/linux
 SOURCES +=                              \

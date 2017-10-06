@@ -475,9 +475,9 @@ int espruino_snprintf( char * s, size_t n, const char * fmt, ... );
 //#define RAND_MAX (0x7FFFFFFFU) // needs to be unsigned!
 
 /// a rand() replacement that doesn't need malloc (!!!)
-int rand();
+int esp_rand();
 /// a rand() replacement that doesn't need malloc (!!!)
-void srand(unsigned int seed);
+void esp_srand(unsigned int seed);
 
 /** get the amount of free stack we have, in bytes */
 size_t jsuGetFreeStack();

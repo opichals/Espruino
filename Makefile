@@ -682,8 +682,8 @@ ifdef PROJECTNAME
   PROJ_NAME=$(PROJECTNAME)
 endif
 
-export CC=$(CCPREFIX)gcc
-export LD=$(CCPREFIX)gcc
+export CC=$(CCPREFIX)cc
+export LD=$(CCPREFIX)cc
 export AR=$(CCPREFIX)ar
 export AS=$(CCPREFIX)as
 export OBJCOPY=$(CCPREFIX)objcopy

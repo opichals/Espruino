@@ -351,19 +351,6 @@ int main(int argc, char **argv) {
   struct sigaction sa;
   sa.sa_handler = sig_handler;
   sa.sa_flags = 0;
-  sigemptyset(&sa.sa_mask);
-  if (sigaction(SIGINT, &sa, NULL) == -1)
-    printf("Adding SIGINT hook failed\n");
-  else
-    printf("Added SIGINT hook\n");
-  if (sigaction(SIGHUP, &sa, NULL) == -1)
-    printf("Adding SIGHUP hook failed\n");
-  else
-    printf("Added SIGHUP hook\n");
-  if (sigaction(SIGTERM, &sa, NULL) == -1)
-    printf("Adding SIGTERM hook failed\n");
-  else
-    printf("Added SIGTERM hook\n");
 #endif//!__MINGW32__
 
   jshInit();

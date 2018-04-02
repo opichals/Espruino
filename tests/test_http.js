@@ -49,15 +49,13 @@ var req = http.request(options, function(res) {
 	  console.log(">CLOSE");
   });
 })
+
 req.write('666');
 setTimeout(() => {
-    req.write('777');
+    req.write('77777');
     setTimeout(() => {
-        req.write('888');
-        setTimeout(() => {
-            req.end();
-        }, 400);
-    }, 400);
+      req.end();
+    }, 1);
 }, 400);
 // .on('error', function(e) { console.log("Got error: " + e.message); });
 

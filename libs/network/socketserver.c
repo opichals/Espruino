@@ -296,27 +296,12 @@ int socketSendData(JsNetwork *net, JsVar *connection, int sckt, JsVar **sendData
   return 0;
 }
 
-void socketReceived(JsVar *connection, JsVar *socket, SocketType socketType, JsVar **receiveData, bool isServer) {
-  bool isHttp = (socketType&ST_TYPE_MASK)==ST_HTTP;
-  bool hadHeaders = jsvGetBoolAndUnLock(jsvObjectGetChild(connection,HTTP_NAME_HAD_HEADERS,0));
-  JsVar *reader = isServer ? connection : socket;
-  if (!hadHeaders && (!isHttp || httpParseHeaders(receiveData, reader, isServer))) {
-    hadHeaders = true;
-    jsvObjectSetChildAndUnLock(reader, HTTP_NAME_HAD_HEADERS, jsvNewFromBool(hadHeaders));
-
-    if (isServer) {
-        JsVar *server = jsvObjectGetChild(connection,HTTP_NAME_SERVER_VAR,0);
-        JsVar *args[2] = { connection, socket };
-        jsiQueueObjectCallbacks(server, HTTP_NAME_ON_CONNECT, args, isHttp ? 2 : 1);
-        jsvUnLock(server);
-    } else {
-        jsiQueueObjectCallbacks(connection, HTTP_NAME_ON_CONNECT, &socket, 1);
-    }
-  }
-  if (!hadHeaders || jsvIsEmptyString(*receiveData)) {
+void socketPushReceiveData(JsVar *reader, JsVar **receiveData, bool isHttp, bool force) {
+  if (!*receiveData || jsvIsEmptyString(*receiveData)) {
       // no data available (after headers)
       return;
   }
+
   // Keep track of how much we received (so we can close once we have it)
   if (isHttp) {
     size_t len = (JsVarInt)jsvGetStringLength(*receiveData);
@@ -337,13 +322,39 @@ void socketReceived(JsVar *connection, JsVar *socket, SocketType socketType, JsV
           );
     }
   }
+
   // execute 'data' callback or save data
-  if (jswrap_stream_pushData(reader, *receiveData, false)) {
+  if (jswrap_stream_pushData(reader, *receiveData, force)) {
     // clear received data
     jsvUnLock(*receiveData);
     *receiveData = 0;
   }
 }
+
+void socketReceived(JsVar *connection, JsVar *socket, SocketType socketType, JsVar **receiveData, bool isServer) {
+  bool isHttp = (socketType&ST_TYPE_MASK)==ST_HTTP;
+  bool hadHeaders = jsvGetBoolAndUnLock(jsvObjectGetChild(connection,HTTP_NAME_HAD_HEADERS,0));
+  JsVar *reader = isServer ? connection : socket;
+  if (!hadHeaders && (!isHttp || httpParseHeaders(receiveData, reader, isServer))) {
+    hadHeaders = true;
+    jsvObjectSetChildAndUnLock(reader, HTTP_NAME_HAD_HEADERS, jsvNewFromBool(hadHeaders));
+
+    if (isServer) {
+        JsVar *server = jsvObjectGetChild(connection,HTTP_NAME_SERVER_VAR,0);
+        JsVar *args[2] = { connection, socket };
+        jsiQueueObjectCallbacks(server, HTTP_NAME_ON_CONNECT, args, isHttp ? 2 : 1);
+        jsvUnLock(server);
+    } else {
+        jsiQueueObjectCallbacks(connection, HTTP_NAME_ON_CONNECT, &socket, 1);
+    }
+  }
+  if (!hadHeaders) {
+      // no headers yet, no 'data' callback
+      return;
+  }
+  socketPushReceiveData(reader, receiveData, isHttp, false);
+}
+
 void socketReceivedUDP(JsVar *connection, JsVar **receiveData) {
   // Get the header
   size_t len = jsvGetStringLength(*receiveData);
@@ -499,13 +510,13 @@ bool socketServerConnectionsIdle(JsNetwork *net) {
       DBG("CLOSE NOW\n");
 
       // send out any data that we were POSTed
-      JsVar *receiveData = jsvObjectGetChild(connection,HTTP_NAME_RECEIVE_DATA,0);
       bool hadHeaders = jsvGetBoolAndUnLock(jsvObjectGetChild(connection,HTTP_NAME_HAD_HEADERS,0));
-      if (hadHeaders && !jsvIsEmptyString(receiveData)) {
+      if (hadHeaders) {
         // execute 'data' callback or save data
-        jswrap_stream_pushData(connection, receiveData, true);
+        JsVar *receiveData = jsvObjectGetChild(connection,HTTP_NAME_RECEIVE_DATA,0);
+        socketPushReceiveData(connection, &receiveData, isHttp, true);
+        jsvUnLock(receiveData);
       }
-      jsvUnLock(receiveData);
 
       // fire error events
       bool hadError = fireErrorEvent(error, connection, socket);
@@ -535,18 +546,6 @@ bool socketServerConnectionsIdle(JsNetwork *net) {
   return hadSockets;
 }
 
-
-void socketClientPushReceiveData(JsVar *connection, JsVar *socket, JsVar **receiveData) {
-  if (*receiveData) {
-    if (jsvIsEmptyString(*receiveData) ||
-        jswrap_stream_pushData(socket, *receiveData, false)) {
-      // clear - because we have issued a callback
-      jsvObjectRemoveChild(connection,HTTP_NAME_RECEIVE_DATA);
-      jsvUnLock(*receiveData);
-      *receiveData = 0;
-    }
-  }
-}
 
 bool socketClientConnectionsIdle(JsNetwork *net) {
   char *buf = alloca((size_t)net->chunkSize); // allocate on stack
@@ -583,7 +582,7 @@ bool socketClientConnectionsIdle(JsNetwork *net) {
       /* We do this up here because we want to wait until we have been once
        * around the idle loop (=callbacks have been executed) before we run this */
       if (hadHeaders)
-        socketClientPushReceiveData(connection, socket, &receiveData);
+        socketPushReceiveData(socket, &receiveData, isHttp, false);
 
       if (!closeConnectionNow) {
         JsVar *sendData = jsvObjectGetChild(connection,HTTP_NAME_SEND_DATA,0);
@@ -662,8 +661,8 @@ bool socketClientConnectionsIdle(JsNetwork *net) {
     if (closeConnectionNow) {
       DBG("close now\n");
 
-      socketClientPushReceiveData(connection, socket, &receiveData);
-      if (!receiveData) {
+      socketPushReceiveData(socket, &receiveData, isHttp, true);
+      if (!receiveData || jsvIsEmptyString(receiveData)) {
         // If we had data to send but the socket closed, this is an error
         JsVar *sendData = jsvObjectGetChild(connection,HTTP_NAME_SEND_DATA,0);
         if (sendData && jsvGetStringLength(sendData) > 0 && error == SOCKET_ERR_CLOSED)

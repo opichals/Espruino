@@ -304,7 +304,6 @@ void socketReceived(JsVar *connection, JsVar *socket, SocketType socketType, JsV
     hadHeaders = true;
     jsvObjectSetChildAndUnLock(reader, HTTP_NAME_HAD_HEADERS, jsvNewFromBool(hadHeaders));
 
-  DBG("onConnect %d\n", isServer);
     if (isServer) {
         JsVar *server = jsvObjectGetChild(connection,HTTP_NAME_SERVER_VAR,0);
         JsVar *args[2] = { connection, socket };
@@ -673,6 +672,12 @@ bool socketClientConnectionsIdle(JsNetwork *net) {
 
         // fire error event, if there is an error
         bool hadError = fireErrorEvent(error, connection, NULL);
+
+        if (!jsvGetBoolAndUnLock(jsvObjectGetChild(socket,HTTP_NAME_ENDED,0))) {
+          jsvObjectSetChildAndUnLock(socket, HTTP_NAME_ENDED, jsvNewFromBool(true));
+          jsiQueueObjectCallbacks(socket, HTTP_NAME_ON_END, NULL, 0);
+          DBG("onEnd:force\n");
+        }
 
         // close callback must happen after error callback
         JsVar *params[1] = { jsvNewFromBool(hadError) };

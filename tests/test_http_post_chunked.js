@@ -13,7 +13,7 @@ var server = http.createServer(function (req, res) {
   req.on('end', function() {
       console.log("Request " + JSON.stringify(req), body);
       res.writeHead(200, {'Content-Type': 'text/plain'});
-      res.write('42');
+      res.write('42'+body);
       res.end();
   });
   req.on('close', function() {
@@ -22,7 +22,6 @@ var server = http.createServer(function (req, res) {
 });
 server.listen(8080);
 
-// http.get("http://localhost:8080/foo.html", function(res) {
 var options = {
     host: 'localhost', // host name
     port: 8080,            // (optional) port, defaults to 80
@@ -43,19 +42,22 @@ var req = http.request(options, function(res) {
   res.on('end', function() {
 	  console.log(">END");
       server.close();
-      result = body=="42";
+      result = body=="42-0123456789abcdef-24";
   });
   res.on('close', function() {
 	  console.log(">CLOSE");
   });
 })
 
-req.write('666');
+req.on('error', function(e) {
+  console.log("Got error: " + e.message);
+});
+
+req.write('-0123456789abcdef-'); // longer than 15 chars
 setTimeout(() => {
-    req.write('77777');
+    req.write('24');
     setTimeout(() => {
       req.end();
     }, 1);
-}, 400);
-// .on('error', function(e) { console.log("Got error: " + e.message); });
+}, 1)
 

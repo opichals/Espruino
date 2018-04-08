@@ -323,6 +323,13 @@ void socketReceived(JsVar *connection, JsVar *socket, SocketType socketType, JsV
     if (jsvGetBoolAndUnLock(jsvObjectGetChild(reader, HTTP_NAME_CHUNKED, 0))) {
       // for 'chunked' set the counter to 1 or 0, the last chunk's len is 5 - "0\r\n\r\n"
       jsvObjectSetChildAndUnLock(reader, HTTP_NAME_RECEIVE_COUNT, jsvNewFromInteger(len > 5 ? 1 : 0));
+
+      len = stringToIntWithRadix(*receiveData, 16, 0);
+      JsVar *res = jsvNewFromEmptyString();
+      if (!res) return; // out of memory
+      jsvAppendStringVar(res, *receiveData, (size_t)3 /*FIXME*/, (size_t)len);
+      jsvUnLock(*receiveData);
+      *receiveData = res;
     } else {
       jsvObjectSetChildAndUnLock(reader, HTTP_NAME_RECEIVE_COUNT,
           jsvNewFromInteger(

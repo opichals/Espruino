@@ -12,9 +12,14 @@ var server = http.createServer(function (req, res) {
   });
   req.on('end', function() {
       console.log("Request " + JSON.stringify(req), body);
-      res.writeHead(200, {'Content-Type': 'text/plain'});
-      res.write('42'+body);
-      res.end();
+      res.writeHead(200, {'Content-Type': 'text/plain', 'Transfer-Encoding': 'chunked' });
+      res.write('42');
+      setTimeout(() => {
+        res.write(body);
+        setTimeout(() => {
+          res.end();
+        }, 10);
+      }, 10);
   });
   req.on('close', function() {
 	  console.log("<close");
@@ -58,6 +63,6 @@ setTimeout(() => {
     req.write('24');
     setTimeout(() => {
       req.end();
-    }, 1);
-}, 1)
+    }, 10);
+}, 10)
 

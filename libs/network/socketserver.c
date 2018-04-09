@@ -18,6 +18,8 @@
 #include "jshardware.h"
 #include "jswrap_net.h"
 #include "jswrap_stream.h"
+#include "jswrap_string.h"
+#include "jswrap_functions.h"
 
 #define HTTP_NAME_SOCKETTYPE "type" // normal socket or HTTP
 #define HTTP_NAME_PORT "port"
@@ -304,15 +306,30 @@ void socketPushReceiveData(JsVar *reader, JsVar **receiveData, bool isHttp, bool
 
   // Keep track of how much we received (so we can close once we have it)
   if (isHttp) {
-    size_t len = (JsVarInt)jsvGetStringLength(*receiveData);
+    size_t len = (size_t)jsvGetStringLength(*receiveData);
     if (jsvGetBoolAndUnLock(jsvObjectGetChild(reader, HTTP_NAME_CHUNKED, 0))) {
       // for 'chunked' set the counter to 1 or 0, the last chunk's len is 5 - "0\r\n\r\n"
       jsvObjectSetChildAndUnLock(reader, HTTP_NAME_RECEIVE_COUNT, jsvNewFromInteger(len > 5 ? 1 : 0));
 
-      len = stringToIntWithRadix(*receiveData, 16, 0);
+      // TODO: handle multiple chunks in *receiveData buffer - do not throw those out
+
+      JsVar *sixteen = jsvNewFromInteger(16);
+      int len = jsvGetIntegerAndUnLock(jswrap_parseInt(*receiveData, sixteen));
+      jsvUnLock(sixteen);
+      DBG("D:%d %s\n", len, *receiveData);
+      if (!len) { // no 'data' callback
+        // clear received data
+        jsvUnLock(*receiveData);
+        *receiveData = 0;
+        return;
+      }
       JsVar *res = jsvNewFromEmptyString();
       if (!res) return; // out of memory
-      jsvAppendStringVar(res, *receiveData, (size_t)3 /*FIXME*/, (size_t)len);
+      JsVar *crlf = jsvNewFromString("\r\n");
+      JsVar *zero = jsvNewFromInteger(0);
+      int pos = jswrap_string_indexOf(*receiveData, crlf, zero, false);
+      jsvAppendStringVar(res, *receiveData, (size_t)pos + 2, len);
+      jsvUnLock2(crlf, zero);
       jsvUnLock(*receiveData);
       *receiveData = res;
     } else {
@@ -332,9 +349,9 @@ void socketPushReceiveData(JsVar *reader, JsVar **receiveData, bool isHttp, bool
 }
 
 void socketReceived(JsVar *connection, JsVar *socket, SocketType socketType, JsVar **receiveData, bool isServer) {
-  bool isHttp = (socketType&ST_TYPE_MASK)==ST_HTTP;
-  bool hadHeaders = jsvGetBoolAndUnLock(jsvObjectGetChild(connection,HTTP_NAME_HAD_HEADERS,0));
   JsVar *reader = isServer ? connection : socket;
+  bool isHttp = (socketType&ST_TYPE_MASK)==ST_HTTP;
+  bool hadHeaders = jsvGetBoolAndUnLock(jsvObjectGetChild(reader,HTTP_NAME_HAD_HEADERS,0));
   if (!hadHeaders && (!isHttp || httpParseHeaders(receiveData, reader, isServer))) {
     hadHeaders = true;
     jsvObjectSetChildAndUnLock(reader, HTTP_NAME_HAD_HEADERS, jsvNewFromBool(hadHeaders));
@@ -926,8 +943,7 @@ void clientRequestWrite(JsNetwork *net, JsVar *httpClientReqVar, JsVar *data, Js
     // append the data to what we want to send
     JsVar *s = jsvAsString(data, false);
     if (s) {
-      if ((socketType&ST_TYPE_MASK) == ST_HTTP &&
-          jsvGetBoolAndUnLock(jsvObjectGetChild(httpClientReqVar, HTTP_NAME_CHUNKED, 0))) {
+      if (jsvGetBoolAndUnLock(jsvObjectGetChild(httpClientReqVar, HTTP_NAME_CHUNKED, 0))) {
         // If we asked to send 'chunked' data, we need to wrap it up,
         // prefixed with the length
         jsvAppendPrintf(sendData, "%x\r\n%v\r\n", jsvGetStringLength(s), s);
@@ -1052,7 +1068,13 @@ void serverResponseWriteHead(JsVar *httpServerResponseVar, int statusCode, JsVar
   }
 
   sendData = jsvVarPrintf("HTTP/1.1 %d OK\r\nServer: Espruino "JS_VERSION"\r\n", statusCode);
-  if (headers) httpAppendHeaders(sendData, headers);
+  if (headers) {
+    httpAppendHeaders(sendData, headers);
+    // if Transfer-Encoding:chunked was set, subsequent writes need to 'chunk' the data that is sent
+    if (jsvIsStringEqualAndUnLock(jsvObjectGetChild(headers, "Transfer-Encoding", 0), "chunked")) {
+      jsvObjectSetChildAndUnLock(httpServerResponseVar, HTTP_NAME_CHUNKED, jsvNewFromBool(true));
+    }
+  }
   // finally add ending newline
   jsvAppendString(sendData, "\r\n");
   jsvObjectSetChildAndUnLock(httpServerResponseVar, HTTP_NAME_SEND_DATA, sendData);
@@ -1066,7 +1088,6 @@ void serverResponseWrite(JsVar *httpServerResponseVar, JsVar *data) {
   }
   // Append data to sendData
   JsVar *sendData = jsvObjectGetChild(httpServerResponseVar, HTTP_NAME_SEND_DATA, 0);
-  DBG("serverResponseWrite %f\n", sendData);
   if (!sendData) {
     // There was no sent data, which means we haven't written headers yet.
     // Do that now with default values
@@ -1077,14 +1098,29 @@ void serverResponseWrite(JsVar *httpServerResponseVar, JsVar *data) {
   // check, just in case!
   if (sendData && !jsvIsUndefined(data)) {
     JsVar *s = jsvAsString(data, false);
-    if (s) jsvAppendStringVarComplete(sendData,s);
+    if (s) {
+      if (jsvGetBoolAndUnLock(jsvObjectGetChild(httpServerResponseVar, HTTP_NAME_CHUNKED, 0))) {
+        // If we asked to send 'chunked' data, we need to wrap it up,
+        // prefixed with the length
+        jsvAppendPrintf(sendData, "%x\r\n%v\r\n", jsvGetStringLength(s), s);
+      } else {
+        jsvAppendStringVarComplete(sendData,s);
+      }
+    }
     jsvUnLock(s);
   }
+  DBG("serverResponseWrite %v\n", sendData);
   jsvUnLock(sendData);
 }
 
 void serverResponseEnd(JsVar *httpServerResponseVar) {
-  serverResponseWrite(httpServerResponseVar, 0); // force connection->sendData to be created even if data not called
+  JsVar *finalData = 0;
+  if (jsvGetBoolAndUnLock(jsvObjectGetChild(httpServerResponseVar, HTTP_NAME_CHUNKED, 0))) {
+    // If we were asked to send 'chunked' data, we need to finish up
+    finalData = jsvNewFromString("");
+  }
+  serverResponseWrite(httpServerResponseVar, finalData); // force connection->sendData to be created even if data not called
+  jsvUnLock(finalData);
   // TODO: This should only close the connection once the received data length == contentLength header
   jsvObjectSetChildAndUnLock(httpServerResponseVar, HTTP_NAME_CLOSE, jsvNewFromBool(true));
 }

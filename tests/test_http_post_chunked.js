@@ -11,6 +11,7 @@ var server = http.createServer(function (req, res) {
       body += data;
   });
   req.on('end', function() {
+      console.log("<end");
       console.log("Request " + JSON.stringify(req), body);
       res.writeHead(200, {'Content-Type': 'text/plain', 'Transfer-Encoding': 'chunked' });
       res.write('42');
@@ -23,6 +24,9 @@ var server = http.createServer(function (req, res) {
   });
   req.on('close', function() {
 	  console.log("<close");
+  });
+  req.on('error', function(e) {
+    console.log("<error: " + e.message);
   });
 });
 server.listen(8080);
@@ -55,7 +59,7 @@ var req = http.request(options, function(res) {
 })
 
 req.on('error', function(e) {
-  console.log("Got error: " + e.message);
+  console.log(">ERROR: " + e.message);
 });
 
 req.write('-0123456789abcdef-'); // longer than 15 chars

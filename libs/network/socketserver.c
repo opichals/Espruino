@@ -591,7 +591,7 @@ bool socketClientConnectionsIdle(JsNetwork *net) {
     int sckt = (int)jsvGetIntegerAndUnLock(jsvObjectGetChild(connection,HTTP_NAME_SOCKET,0))-1; // so -1 if undefined
     if (sckt>=0) {
       if (isHttp)
-        hadHeaders = jsvGetBoolAndUnLock(jsvObjectGetChild(connection,HTTP_NAME_HAD_HEADERS,0));
+        hadHeaders = jsvGetBoolAndUnLock(jsvObjectGetChild(socket,HTTP_NAME_HAD_HEADERS,0));
       else
         hadHeaders = true;
       receiveData = jsvObjectGetChild(connection,HTTP_NAME_RECEIVE_DATA,0);
@@ -631,7 +631,7 @@ bool socketClientConnectionsIdle(JsNetwork *net) {
             } else if (!jsvGetBoolAndUnLock(jsvObjectGetChild(socket,HTTP_NAME_ENDED,0))) {
               jsvObjectSetChildAndUnLock(socket, HTTP_NAME_ENDED, jsvNewFromBool(true));
               jsiQueueObjectCallbacks(socket, HTTP_NAME_ON_END, NULL, 0);
-              DBG("onEnd %d (%d)\n", contentToReceive, closeConnectionNow);
+              DBG("onEnd %d (%d) %d\n", contentToReceive, closeConnectionNow, hadHeaders);
             }
           }
         }
@@ -642,9 +642,17 @@ bool socketClientConnectionsIdle(JsNetwork *net) {
             ; // ignore... it's just telling us we're not connected yet
           } else if (num < 0) {
             closeConnectionNow = true;
-            error = num;
-            // disconnected without headers? error.
-            if (!hadHeaders && error == SOCKET_ERR_CLOSED) error = SOCKET_ERR_NO_RESP;
+            // only error out when the response was not completely received
+            if (num == SOCKET_ERR_CLOSED) {
+              JsVarInt contentToReceive = jsvGetIntegerAndUnLock(jsvObjectGetChild(socket, HTTP_NAME_RECEIVE_COUNT, 0));
+              if (!isHttp || contentToReceive > 0 || !hadHeaders) {
+                error = num;
+                // disconnected without headers? error.
+                if (!hadHeaders) error = SOCKET_ERR_NO_RESP;
+              }
+            } else {
+              error = num;
+            }
           } else {
             // did we just get connected?
             if (!alreadyConnected && !isHttp) {
@@ -1041,14 +1049,15 @@ void clientRequestEnd(JsNetwork *net, JsVar *httpClientReqVar) {
     clientRequestWrite(net, httpClientReqVar, finalData, NULL, 0);
     jsvUnLock(finalData);
   } else {
-    // on normal sockets, we actually request close after all data sent
-    jsvObjectSetChildAndUnLock(httpClientReqVar, HTTP_NAME_CLOSE, jsvNewFromBool(true));
     // if we never sent any data, make sure we close 'now'
     JsVar *sendData = jsvObjectGetChild(httpClientReqVar, HTTP_NAME_SEND_DATA, 0);
     if (!sendData || jsvIsEmptyString(sendData))
       jsvObjectSetChildAndUnLock(httpClientReqVar, HTTP_NAME_CLOSENOW, jsvNewFromBool(true));
     jsvUnLock(sendData);
   }
+
+  // request close after all data sent
+  jsvObjectSetChildAndUnLock(httpClientReqVar, HTTP_NAME_CLOSE, jsvNewFromBool(true));
 }
 
 
@@ -1121,7 +1130,7 @@ void serverResponseEnd(JsVar *httpServerResponseVar) {
   }
   serverResponseWrite(httpServerResponseVar, finalData); // force connection->sendData to be created even if data not called
   jsvUnLock(finalData);
-  // TODO: This should only close the connection once the received data length == contentLength header
+
   jsvObjectSetChildAndUnLock(httpServerResponseVar, HTTP_NAME_CLOSE, jsvNewFromBool(true));
 }
 

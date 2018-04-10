@@ -300,8 +300,8 @@ int socketSendData(JsNetwork *net, JsVar *connection, int sckt, JsVar **sendData
 
 void socketPushReceiveData(JsVar *reader, JsVar **receiveData, bool isHttp, bool force) {
   if (!*receiveData || jsvIsEmptyString(*receiveData)) {
-      // no data available (after headers)
-      return;
+    // no data available (after headers)
+    return;
   }
 
   // Keep track of how much we received (so we can close once we have it)
@@ -334,9 +334,9 @@ void socketPushReceiveData(JsVar *reader, JsVar **receiveData, bool isHttp, bool
       *receiveData = res;
     } else {
       jsvObjectSetChildAndUnLock(reader, HTTP_NAME_RECEIVE_COUNT,
-          jsvNewFromInteger(
-            jsvGetIntegerAndUnLock(jsvObjectGetChild(reader, HTTP_NAME_RECEIVE_COUNT, JSV_INTEGER)) - len)
-          );
+        jsvNewFromInteger(
+          jsvGetIntegerAndUnLock(jsvObjectGetChild(reader, HTTP_NAME_RECEIVE_COUNT, JSV_INTEGER)) - len)
+        );
     }
   }
 
@@ -357,17 +357,17 @@ void socketReceived(JsVar *connection, JsVar *socket, SocketType socketType, JsV
     jsvObjectSetChildAndUnLock(reader, HTTP_NAME_HAD_HEADERS, jsvNewFromBool(hadHeaders));
 
     if (isServer) {
-        JsVar *server = jsvObjectGetChild(connection,HTTP_NAME_SERVER_VAR,0);
-        JsVar *args[2] = { connection, socket };
-        jsiQueueObjectCallbacks(server, HTTP_NAME_ON_CONNECT, args, isHttp ? 2 : 1);
-        jsvUnLock(server);
+      JsVar *server = jsvObjectGetChild(connection,HTTP_NAME_SERVER_VAR,0);
+      JsVar *args[2] = { connection, socket };
+      jsiQueueObjectCallbacks(server, HTTP_NAME_ON_CONNECT, args, isHttp ? 2 : 1);
+      jsvUnLock(server);
     } else {
-        jsiQueueObjectCallbacks(connection, HTTP_NAME_ON_CONNECT, &socket, 1);
+      jsiQueueObjectCallbacks(connection, HTTP_NAME_ON_CONNECT, &socket, 1);
     }
   }
   if (!hadHeaders) {
-      // no headers yet, no 'data' callback
-      return;
+    // no headers yet, no 'data' callback
+    return;
   }
   socketPushReceiveData(reader, receiveData, isHttp, false);
 }

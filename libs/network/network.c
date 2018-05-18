@@ -254,6 +254,9 @@ bool networkGetFromVar(JsNetwork *net) {
     return false;
   }
 
+  // default rcvBufSize is the net->chunkSize
+  net->rcvBufSize = net->chunkSize;
+
   // Save the current network as a global.
   networkCurrentStruct = net;
   return true;

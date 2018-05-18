@@ -31,6 +31,7 @@
 #define HTTP_NAME_SEND_DATA "dSnd"
 #define HTTP_NAME_RESPONSE_VAR "res"
 #define HTTP_NAME_OPTIONS_VAR "opt"
+#define HTTP_NAME_RCVBUF_SiZE "brcv"
 #define HTTP_NAME_SERVER_VAR "svr"
 #define HTTP_NAME_CHUNKED "chunked"
 #define HTTP_NAME_CLOSENOW "clsNow"  // boolean: gotta close
@@ -218,12 +219,36 @@ static NO_INLINE void socketSetType(JsVar *var, SocketType socketType) {
   jsvObjectSetChildAndUnLock(var, HTTP_NAME_SOCKETTYPE, jsvNewFromInteger((JsVarInt)socketType));
 }
 
+static size_t getMaxRcvBufferSize(size_t rcvBufSize, JsNetwork *connections) {
+  if (connections) {
+    JsvObjectIterator it;
+    jsvObjectIteratorNew(&it, connections);
+    while (jsvObjectIteratorHasValue(&it)) {
+      JsVar *connection = jsvObjectIteratorGetValue(&it);
+      int recvBufferSize = jsvGetIntegerAndUnLock(jsvObjectGetChild(connection, HTTP_NAME_RCVBUF_SiZE, 0));
+      rcvBufSize = recvBufferSize > rcvBufSize ? recvBufferSize : rcvBufSize;
+      jsvUnLock(connection);
+      jsvObjectIteratorNext(&it);
+    }
+    jsvUnLock(connections);
+  }
+  return rcvBufSize;
+}
+
+static void updateRcvBufferSize(JsNetwork *net) {
+  size_t rcvBufSize = (size_t)net->chunkSize;
+  rcvBufSize = getMaxRcvBufferSize(rcvBufSize, socketGetArray(HTTP_ARRAY_HTTP_CLIENT_CONNECTIONS, false));
+  rcvBufSize = getMaxRcvBufferSize(rcvBufSize, socketGetArray(HTTP_ARRAY_HTTP_SERVER_CONNECTIONS, false));
+  net->rcvBufSize = rcvBufSize;
+}
+
 void _socketConnectionKill(JsNetwork *net, JsVar *connection) {
   if (!net || networkState != NETWORKSTATE_ONLINE) return;
   int sckt = (int)jsvGetIntegerAndUnLock(jsvObjectGetChild(connection,HTTP_NAME_SOCKET,0))-1; // so -1 if undefined
   if (sckt>=0) {
     SocketType socketType = socketGetType(connection);
     netCloseSocket(net, socketType, sckt);
+    updateRcvBufferSize(net);
     jsvObjectRemoveChild(connection,HTTP_NAME_SOCKET);
     jsvObjectSetChildAndUnLock(connection, HTTP_NAME_CONNECTED, jsvNewFromBool(false));
     jsvObjectSetChildAndUnLock(connection, HTTP_NAME_CLOSE, jsvNewFromBool(true));
@@ -486,9 +511,7 @@ static bool fireErrorEvent(int error, JsVar *obj1, JsVar *obj2) {
 
 // -----------------------------
 
-bool socketServerConnectionsIdle(JsNetwork *net) {
-  char *buf = alloca((size_t)net->chunkSize); // allocate on stack
-
+bool socketServerConnectionsIdle(JsNetwork *net, char* buf, size_t rcvBufSize) {
   JsVar *arr = socketGetArray(HTTP_ARRAY_HTTP_SERVER_CONNECTIONS,false);
   if (!arr) return false;
 
@@ -509,7 +532,7 @@ bool socketServerConnectionsIdle(JsNetwork *net) {
     int error = 0;
 
     if (!closeConnectionNow) {
-      int num = netRecv(net, socketType, sckt, buf, (size_t)net->chunkSize);
+      int num = netRecv(net, socketType, sckt, buf, rcvBufSize);
       if (num<0) {
         // we probably disconnected so just get rid of this
         closeConnectionNow = true;
@@ -602,9 +625,7 @@ bool socketServerConnectionsIdle(JsNetwork *net) {
 }
 
 
-bool socketClientConnectionsIdle(JsNetwork *net) {
-  char *buf = alloca((size_t)net->chunkSize); // allocate on stack
-
+bool socketClientConnectionsIdle(JsNetwork *net, char *buf, size_t rcvBufSize) {
   JsVar *arr = socketGetArray(HTTP_ARRAY_HTTP_CLIENT_CONNECTIONS,false);
   if (!arr) return false;
 
@@ -674,7 +695,7 @@ bool socketClientConnectionsIdle(JsNetwork *net) {
           }
         }
         // Now read data if possible (and we have space for it)
-        int num = netRecv(net, socketType, sckt, buf, (size_t)net->chunkSize);
+        int num = netRecv(net, socketType, sckt, buf, rcvBufSize);
         if (!alreadyConnected && num == SOCKET_ERR_NO_CONN) {
           ; // ignore... it's just telling us we're not connected yet
         } else if (num < 0) {
@@ -761,7 +782,6 @@ bool socketClientConnectionsIdle(JsNetwork *net) {
   return hadSockets;
 }
 
-
 bool socketIdle(JsNetwork *net) {
   if (networkState != NETWORKSTATE_ONLINE) {
     // clear all clients and servers
@@ -775,7 +795,6 @@ bool socketIdle(JsNetwork *net) {
     jsvObjectIteratorNew(&it, arr);
     while (jsvObjectIteratorHasValue(&it)) {
       hadSockets = true;
-
 
       JsVar *server = jsvObjectIteratorGetValue(&it);
       SocketType socketType = socketGetType(server);
@@ -825,8 +844,10 @@ bool socketIdle(JsNetwork *net) {
     jsvUnLock(arr);
   }
 
-  if (socketServerConnectionsIdle(net)) hadSockets = true;
-  if (socketClientConnectionsIdle(net)) hadSockets = true;
+  size_t rcvBufSize = (size_t)net->rcvBufSize;
+  char *buf = alloca(rcvBufSize); // allocate recvBuf on stack
+  if (socketServerConnectionsIdle(net, buf, rcvBufSize)) hadSockets = true;
+  if (socketClientConnectionsIdle(net, buf, rcvBufSize)) hadSockets = true;
   netCheckError(net);
   return hadSockets;
 }
@@ -878,6 +899,8 @@ void serverListen(JsNetwork *net, JsVar *server, unsigned short port, SocketType
     }
   }
 
+  updateRcvBufferSize(net);
+
   DBG("serverListen port=%d (%d)\n", port, sckt);
   jsvUnLock2(options, arr);
 }
@@ -921,6 +944,9 @@ JsVar *clientRequestNew(SocketType socketType, JsVar *options, JsVar *callback) 
    if (res)
      jsvObjectSetChild(req, HTTP_NAME_RESPONSE_VAR, res);
    jsvObjectSetChild(req, HTTP_NAME_OPTIONS_VAR, options);
+
+   int recvBufferSize = options ? jsvGetIntegerAndUnLock(jsvObjectGetChild(options, "recvBufferSize", 0)) : 0;
+   jsvObjectSetChild(req, HTTP_NAME_RCVBUF_SiZE, jsvNewFromInteger(recvBufferSize));
   }
   jsvUnLock2(res, arr);
   return req;
@@ -1063,6 +1089,8 @@ void clientRequestConnect(JsNetwork *net, JsVar *httpClientReqVar) {
   }
 
   jsvUnLock(options);
+
+  updateRcvBufferSize(net);
 
   netCheckError(net);
 }

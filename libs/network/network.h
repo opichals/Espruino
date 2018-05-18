@@ -65,6 +65,7 @@ typedef struct JsNetwork {
   unsigned char _blank; ///< this is needed as jsvGetString for 'data' wants to add a trailing zero  
 
   int chunkSize; ///< Amount of memory to allocate for chunks of data when using send/recv
+  int rcvBufSize; ///< Amount of memory to allocate for recv (sockopt SO_RCVBUF)
 
   /// Called on idle. Do any checks required for this device
   void (*idle)(struct JsNetwork *net);
